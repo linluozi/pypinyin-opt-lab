@@ -1,0 +1,158 @@
+#!/usr/bin/env python
+# -*- coding: utf-8 -*-
+
+from __future__ import unicode_literals
+
+import os
+import re
+
+from enum import IntEnum, unique
+
+from pypinyin_s3 import pinyin_dict
+from pypinyin_s3.compat import SUPPORT_UCS4
+
+# 词语拼音库
+if os.environ.get('PYPINYIN_NO_PHRASES'):
+    PHRASES_DICT = {}
+else:
+    from pypinyin_s3 import phrases_dict
+    PHRASES_DICT = phrases_dict.phrases_dict
+
+# 单字拼音库
+PINYIN_DICT = pinyin_dict.pinyin_dict
+
+# 利用环境变量控制不做copy操作(无自定义拼音库的情况), 以减少内存使用
+if not os.environ.get('PYPINYIN_NO_DICT_COPY'):
+    PINYIN_DICT = PINYIN_DICT.copy()
+    PHRASES_DICT = PHRASES_DICT.copy()
+
+# 匹配使用数字标识声调的字符的正则表达式
+RE_TONE2 = re.compile(r'([aeoiuvnm])([1-4])$')
+
+# 有拼音的汉字
+if SUPPORT_UCS4:
+    RE_HANS = re.compile(
+        r'^(?:['
+        r'\u3007'                  # 〇
+        r'\ue815-\ue864'
+        r'\ufa18'
+        r'\u3400-\u4dbf'           # CJK扩展A:[3400-4DBF]
+        r'\u4e00-\u9fff'           # CJK基本:[4E00-9FFF]
+        r'\uf900-\ufaff'           # CJK兼容:[F900-FAFF]
+        r'\U00020000-\U0002A6DF'   # CJK扩展B:[20000-2A6DF]
+        r'\U0002A703-\U0002B73F'   # CJK扩展C:[2A700-2B73F]
+        r'\U0002B740-\U0002B81D'   # CJK扩展D:[2B740-2B81D]
+        r'\U0002B825-\U0002BF6E'   # CJK扩展E:
+        r'\U0002C029-\U0002CE93'   # CJK扩展F:
+        r'\U0002D016'
+        r'\U0002D11B-\U0002EBD9'
+        r'\U0002F80A-\U0002FA1F'   # CJK兼容扩展:[2F800-2FA1F]
+        r'\U00030000-\U0003134A'   # CJK扩展G:
+        r'\U000300F7-\U00031288'
+        r'\U00030EDD'
+        r'\U00030EDE'
+        r'\U00031350-\U00032389'
+        r'])+$'
+    )
+else:
+    RE_HANS = re.compile(
+        r'^(?:['
+        r'\u3007'                  # 〇
+        r'\ue815-\ue864'
+        r'\ufa18'
+        r'\u3400-\u4dbf'           # CJK扩展A:[3400-4DBF]
+        r'\u4e00-\u9fff'           # CJK基本:[4E00-9FFF]
+        r'\uf900-\ufaff'           # CJK兼容:[F900-FAFF]
+        r'])+$'
+    )
+
+
+# [OPT] 「汉字 / 非汉字」连续片段切分正则。
+#
+# ``RE_HANS`` 是带 ``^...$`` 锚点的整体匹配，只能回答「这段是不是纯汉字」，
+# 于是 ``simple_seg._seg`` 不得不逐字符调用一次 ``RE_HANS.match`` 来分类 ——
+# 一段 5000 字的文本要 1.07 ms，全花在 Python 层的循环和 5000 次正则调用上。
+#
+# 这里复用同一个字符类，只把锚点换成「连续片段」的形式，交给 C 层的
+# ``findall`` 一次扫完：同样的文本 0.13 ms，快 8 倍。字符类是从 ``RE_HANS``
+# 的 pattern 里原样切出来的，不手抄一遍，因此不会随着上游扩充 Unicode 区段
+# 而漂移。
+def _derive_chunk_pattern(hans_pattern, prefix, suffix):
+    """从 ``RE_HANS`` 的 pattern 派生切分正则的字符类。
+
+    :param hans_pattern: ``RE_HANS.pattern``
+    :param prefix: 锚点前缀，如 ``'^(?:['``
+    :param suffix: 锚点后缀，如 ``'])+$'``
+    :return: 字符类内容（不含方括号）
+    """
+    if not (hans_pattern.startswith(prefix)
+            and hans_pattern.endswith(suffix)):
+        # 上游改了正则结构：宁可退回逐字符路径，也不要悄悄算错
+        return None
+    return hans_pattern[len(prefix):-len(suffix)]
+
+
+_HANS_CLASS = _derive_chunk_pattern(RE_HANS.pattern, '^(?:[', '])+$')
+if _HANS_CLASS is not None:
+    RE_HANS_CHUNKS = re.compile(
+        '[{0}]+|[^{0}]+'.format(_HANS_CLASS))
+else:  # pragma: no cover - 仅在上游正则结构变化时触发
+    RE_HANS_CHUNKS = None
+
+
+@unique
+class Style(IntEnum):
+    """拼音风格"""
+
+    #: 普通风格，不带声调。如： 中国 -> ``zhong guo``
+    NORMAL = 0
+    #: 标准声调风格，拼音声调在韵母第一个字母上（默认风格）。如： 中国 -> ``zhōng guó``
+    TONE = 1
+    #: 声调风格2，即拼音声调在各个韵母之后，用数字 [1-4] 进行表示。如： 中国 -> ``zho1ng guo2``
+    TONE2 = 2
+    #: 声调风格3，即拼音声调在各个拼音之后，用数字 [1-4] 进行表示。如： 中国 -> ``zhong1 guo2``
+    TONE3 = 8
+    #: 声母风格，只返回各个拼音的声母部分（注：有的拼音没有声母，详见 `#27`_）。如： 中国 -> ``zh g``
+    INITIALS = 3
+    #: 首字母风格，只返回拼音的首字母部分。如： 中国 -> ``z g``
+    FIRST_LETTER = 4
+    #: 韵母风格，只返回各个拼音的韵母部分，不带声调。如： 中国 -> ``ong uo``
+    FINALS = 5
+    #: 标准韵母风格，带声调，声调在韵母第一个字母上。如：中国 -> ``ōng uó``
+    FINALS_TONE = 6
+    #: 韵母风格2，带声调，声调在各个韵母之后，用数字 [1-4] 进行表示。如： 中国 -> ``o1ng uo2``
+    FINALS_TONE2 = 7
+    #: 韵母风格3，带声调，声调在各个拼音之后，用数字 [1-4] 进行表示。如： 中国 -> ``ong1 uo2``
+    FINALS_TONE3 = 9
+    #: 注音风格，带声调，阴平（第一声）不标。如： 中国 -> ``ㄓㄨㄥ ㄍㄨㄛˊ``
+    BOPOMOFO = 10
+    #: 注音风格，仅首字母。如： 中国 -> ``ㄓ ㄍ``
+    BOPOMOFO_FIRST = 11
+    #: 汉语拼音与俄语字母对照风格，声调在各个拼音之后，用数字 [1-4] 进行表示。如： 中国 -> ``чжун1 го2``
+    CYRILLIC = 12
+    #: 汉语拼音与俄语字母对照风格，仅首字母。如： 中国 -> ``ч г``
+    CYRILLIC_FIRST = 13
+    #: 威妥玛拼音/韦氏拼音/威式拼音风格，无声调
+    WADEGILES = 14
+    #: 国语罗马字风格。如：中国 -> ``jong gwo``
+    GWOYEU = 15
+    #: 中国内地盲文风格，无声调。如：中国 -> ``⠌⠲ ⠛⠕``
+    BRAILLE_MAINLAND = 16
+    #: 中国内地盲文风格，带声调。如：中国 -> ``⠌⠲⠁ ⠛⠕⠂``
+    BRAILLE_MAINLAND_TONE = 17
+
+
+NORMAL = STYLE_NORMAL = Style.NORMAL
+TONE = STYLE_TONE = Style.TONE
+TONE2 = STYLE_TONE2 = Style.TONE2
+TONE3 = STYLE_TONE3 = Style.TONE3
+INITIALS = STYLE_INITIALS = Style.INITIALS
+FIRST_LETTER = STYLE_FIRST_LETTER = Style.FIRST_LETTER
+FINALS = STYLE_FINALS = Style.FINALS
+FINALS_TONE = STYLE_FINALS_TONE = Style.FINALS_TONE
+FINALS_TONE2 = STYLE_FINALS_TONE2 = Style.FINALS_TONE2
+FINALS_TONE3 = STYLE_FINALS_TONE3 = Style.FINALS_TONE3
+BOPOMOFO = STYLE_BOPOMOFO = Style.BOPOMOFO
+BOPOMOFO_FIRST = STYLE_BOPOMOFO_FIRST = Style.BOPOMOFO_FIRST
+CYRILLIC = STYLE_CYRILLIC = Style.CYRILLIC
+CYRILLIC_FIRST = STYLE_CYRILLIC_FIRST = Style.CYRILLIC_FIRST

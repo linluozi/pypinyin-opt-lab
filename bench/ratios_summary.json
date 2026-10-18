@@ -1,0 +1,57 @@
+{
+  "lazy_short": {
+    "median": 2.282,
+    "min": 2.215,
+    "max": 2.39
+  },
+  "lazy_mid": {
+    "median": 2.465,
+    "min": 2.403,
+    "max": 2.64
+  },
+  "pinyin_list_mid": {
+    "median": 1.647,
+    "min": 1.637,
+    "max": 1.721
+  },
+  "lazy_pingguo": {
+    "median": 1.712,
+    "min": 1.644,
+    "max": 1.758
+  },
+  "lazy_liangzi": {
+    "median": 1.88,
+    "min": 1.859,
+    "max": 1.931
+  },
+  "lazy_zhongguo": {
+    "median": 1.965,
+    "min": 1.947,
+    "max": 1.969
+  },
+  "lazy_tone_pingguo": {
+    "median": 1.265,
+    "min": 1.194,
+    "max": 1.303
+  },
+  "lazy_first_pingguo": {
+    "median": 1.694,
+    "min": 1.653,
+    "max": 1.749
+  },
+  "pinyin_pingguo": {
+    "median": 1.275,
+    "min": 1.183,
+    "max": 1.344
+  },
+  "pinyin_hetero_pingguo": {
+    "median": 1.36,
+    "min": 1.328,
+    "max": 1.453
+  },
+  "slug_pingguo": {
+    "median": 1.702,
+    "min": 1.702,
+    "max": 1.857
+  }
+}

@@ -1,0 +1,28 @@
+{
+  "steps": [
+    {
+      "from": "ref",
+      "to": "s1",
+      "label": "translate tables for tone conversion",
+      "ratio": 1.104145111177094
+    },
+    {
+      "from": "s1",
+      "to": "s2",
+      "label": "syllable cache + lookup fast path",
+      "ratio": 1.3642743321062951
+    },
+    {
+      "from": "s2",
+      "to": "s3",
+      "label": "C-level Han chunking",
+      "ratio": 1.111713877503254
+    },
+    {
+      "from": "s3",
+      "to": "opt",
+      "label": "total (s3 == opt)",
+      "ratio": 1.0073814084163972
+    }
+  ]
+}
